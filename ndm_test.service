@@ -1,0 +1,12 @@
+[Unit]
+Description=NDM C++ test.
+After=network.target
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=/home/projects
+ExecStart=/usr/local/bin/ndm_test
+
+[Install]
+WantedBy=multi-user.target
