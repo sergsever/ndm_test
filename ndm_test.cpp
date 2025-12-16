@@ -19,12 +19,19 @@
 #include <ctime>
 #include <map>
 #include <numeric>
+#include <boost/asio/thread_pool.hpp>
+#include <boost/asio.hpp>
+#include <memory>
+#include<atomic>
 
 #define PORT "9034"   // port we're listening on/
 
 /*
  * Return a listening socket
  */
+
+
+
 int get_listener_socket(void)
 {
     struct addrinfo hints, *ai, *p;
@@ -81,7 +88,7 @@ int get_listener_socket(void)
 
 std::map<int, unsigned> clients;
 std::mutex mutex_clients;
-bool stop = false;
+std::atomic<bool> stop = false;
 std::mutex stop_mutex;
 const int BUFF_SIZE = 256;
 
@@ -96,6 +103,7 @@ int processClient(int clientSock)
 	char buff[BUFF_SIZE];
 	int recived = 0;
 	mutex_clients.lock();
+	
 	clients[clientSock] = ++clients[clientSock];
 	mutex_clients.unlock();
 	memset(&buff, 0, BUFF_SIZE); 
@@ -147,9 +155,9 @@ int processClient(int clientSock)
 		{
 			std::cout << "command shutdown" << std::endl;
 			snprintf(output, BUFF_SIZE, "-bye! ");
-			stop_mutex.lock();
+			//stop_mutex.lock();
 			stop = true;
-			stop_mutex.unlock();
+			//stop_mutex.unlock();
 		}
 			
 		if(strlen(output) > 0)
@@ -171,19 +179,18 @@ int processClient(int clientSock)
 /*
  * Main
  */
-
-int main(void)
+int run_events(std::shared_ptr<boost::asio::thread_pool> pool)
 {
     fd_set master;    // master file descriptor list
     fd_set read_fds;  // temp file descriptor list for select()
     //int fdmax;        // maximum file descriptor number
 
     int listener;     // listening socket descriptor
-	int epoll_descriptor;  
-	std::vector<std::thread> threads;
-
     FD_ZERO(&master);    // clear the master and temp sets
     FD_ZERO(&read_fds);
+	int epoll_descriptor = 0;	
+//    boost::asio::thread_pool pool(5);
+
 	std::cout << "get socket" << std::endl;
     listener = get_listener_socket();
 	epoll_descriptor = epoll_create1(0);
@@ -204,9 +211,9 @@ int main(void)
 	}
 	std::cout << "waiting events" << std::endl;  
 	const int MAX_EVENTS = 64;
-	stop_mutex.lock();
+	//stop_mutex.lock();
 	stop = false;
-	stop_mutex.unlock();
+	//stop_mutex.unlock();
 	while(stop == false)
 	{
 		struct epoll_event events[MAX_EVENTS];
@@ -231,14 +238,26 @@ int main(void)
 				exit(4);
 				}
 				//result = std::async(std::launch::async, processClient, client);
-				std::thread thread(processClient, client);
-				thread.join();
+//				std::thread thread(processClient, client);
+				boost::asio::post(*pool, [client]{ processClient(client);} );
+				std::cout << "add to pool" << std::endl;
+				
 				std::cout << "back in events loop" << std::endl;
+				//pool->join();
 			} 
 
 		} 
 	}
-		exit(0);
+	std::cout << "end events loop" << std::endl;
+return 0;
+} 
+
+int main(void)
+{
+std::shared_ptr<boost::asio::thread_pool> pool = std::make_shared<boost::asio::thread_pool>(5);
+		boost::asio::post(*pool, [pool]{ run_events(pool);});
+		pool->join();
+		std::cout << "end all threads" << std::endl;
 }
 	
 
