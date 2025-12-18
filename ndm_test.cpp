@@ -98,7 +98,7 @@ const std::string cmdTime("/time");
 const std::string cmdStats("/stats");
 const std::string cmdShutdown("/shutdown");
 
-int processClient(int clientSock)
+int processClient(int clientSock, int epoll_descriptor)
 {
 	char buff[BUFF_SIZE];
 	int recived = 0;
@@ -107,7 +107,7 @@ int processClient(int clientSock)
 	clients[clientSock] = ++clients[clientSock];
 	mutex_clients.unlock();
 	memset(&buff, 0, BUFF_SIZE); 
-	std::cout << "process client" << std::endl;
+	std::cout << "process client: "  << clientSock  << std::endl;
 	recived = recv(clientSock, buff , BUFF_SIZE, 0); 
 	std::cout << "recived: " << recived << " chars: " << buff << std::endl;  
 	if (recived > 0)
@@ -157,6 +157,8 @@ int processClient(int clientSock)
 			snprintf(output, BUFF_SIZE, "-bye! ");
 			//stop_mutex.lock();
 			stop = true;
+			close(epoll_descriptor);
+			//exit(0);
 			//stop_mutex.unlock();
 		}
 			
@@ -172,14 +174,18 @@ int processClient(int clientSock)
 			send(clientSock, buff, strlen(buff), 0); 
 		}
 		}
-	shutdown(clientSock, 2);
+	//shutdown(clientSock,0);
+	std::cout << "close client sock\n";
 	close(clientSock);
-	return 0;	     
+//	if (stop)
+//		exit(0);
+//	else
+		return 0;
 }
 /*
  * Main
  */
-int run_events(std::shared_ptr<boost::asio::thread_pool> pool)
+int run_events(void)
 {
     fd_set master;    // master file descriptor list
     fd_set read_fds;  // temp file descriptor list for select()
@@ -190,13 +196,14 @@ int run_events(std::shared_ptr<boost::asio::thread_pool> pool)
     FD_ZERO(&read_fds);
 	int epoll_descriptor = 0;	
 //    boost::asio::thread_pool pool(5);
+	boost::asio::thread_pool pool(5);
 
 	std::cout << "get socket" << std::endl;
     listener = get_listener_socket();
 	epoll_descriptor = epoll_create1(0);
 	if (epoll_descriptor == -1)
 	{
-		std::cout << "error creating epool: " << errno << std::endl;
+		std::cout << "error creating epoll: " << errno << std::endl;
 		exit(1); 
 	}
 	std::cout << "epoll created" << std::endl;
@@ -212,12 +219,12 @@ int run_events(std::shared_ptr<boost::asio::thread_pool> pool)
 	std::cout << "waiting events" << std::endl;  
 	const int MAX_EVENTS = 64;
 	//stop_mutex.lock();
-	stop = false;
+	//stop = false;
 	//stop_mutex.unlock();
 	while(stop == false)
 	{
 		struct epoll_event events[MAX_EVENTS];
-		int events_count = epoll_wait(epoll_descriptor, events, MAX_EVENTS, -1);
+		int events_count = epoll_wait(epoll_descriptor, events, MAX_EVENTS,1000 );
 		std::cout << "events count: " << events_count << std::endl;
 		if( events_count == -1)
 		{
@@ -239,8 +246,8 @@ int run_events(std::shared_ptr<boost::asio::thread_pool> pool)
 				}
 				//result = std::async(std::launch::async, processClient, client);
 //				std::thread thread(processClient, client);
-				boost::asio::post(*pool, [client]{ processClient(client);} );
-				std::cout << "add to pool" << std::endl;
+				boost::asio::post(pool, [client, epoll_descriptor]{ processClient(client, epoll_descriptor); });
+				
 				
 				std::cout << "back in events loop" << std::endl;
 				//pool->join();
@@ -248,16 +255,20 @@ int run_events(std::shared_ptr<boost::asio::thread_pool> pool)
 
 		} 
 	}
+	
 	std::cout << "end events loop" << std::endl;
+	pool.join();
 return 0;
 } 
 
 int main(void)
 {
-std::shared_ptr<boost::asio::thread_pool> pool = std::make_shared<boost::asio::thread_pool>(5);
-		boost::asio::post(*pool, [pool]{ run_events(pool);});
-		pool->join();
+		 std::thread events(run_events); 
+				std::cout << "run events" << std::endl;
+				events.join();
+				std::cout << "end of events thread\n";
 		std::cout << "end all threads" << std::endl;
+		return 0;
 }
 	
 
